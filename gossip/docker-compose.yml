@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  node1:
+    build: .
+    container_name: node1
+    environment:
+      - NODE_ID=node1
+      - NODE_IP=node1
+      - NODE_PORT=8001
+      - SEED_NODES=node2:8002,node3:8003,node4:8004,node5:8005,node6:8006,node7:8007
+    ports:
+      - "8001:8001"
+
+  node2:
+    build: .
+    container_name: node2
+    environment:
+      - NODE_ID=node2
+      - NODE_IP=node2
+      - NODE_PORT=8002
+      - SEED_NODES=node1:8001,node3:8003,node4:8004,node5:8005,node6:8006,node7:8007
+    ports:
+      - "8002:8002"
+
+  node3:
+    build: .
+    container_name: node3
+    environment:
+      - NODE_ID=node3
+      - NODE_IP=node3
+      - NODE_PORT=8003
+      - SEED_NODES=node1:8001,node2:8002,node4:8004,node5:8005,node6:8006,node7:8007
+    ports:
+      - "8003:8003"
+
+  node4:
+    build: .
+    container_name: node4
+    environment:
+      - NODE_ID=node4
+      - NODE_IP=node4
+      - NODE_PORT=8004
+      - SEED_NODES=node1:8001,node2:8002,node3:8003,node5:8005,node6:8006,node7:8007
+    ports:
+      - "8004:8004"
+
+  node5:
+    build: .
+    container_name: node5
+    environment:
+      - NODE_ID=node5
+      - NODE_IP=node5
+      - NODE_PORT=8005
+      - SEED_NODES=node1:8001,node2:8002,node3:8003,node4:8004,node6:8006,node7:8007
+    ports:
+      - "8005:8005"
+
+  node6:
+    build: .
+    container_name: node6
+    environment:
+      - NODE_ID=node6
+      - NODE_IP=node6
+      - NODE_PORT=8006
+      - SEED_NODES=node1:8001,node2:8002,node3:8003,node4:8004,node5:8005,node7:8007
+    ports:
+      - "8006:8006"
+
+  node7:
+    build: .
+    container_name: node7
+    environment:
+      - NODE_ID=node7
+      - NODE_IP=node7
+      - NODE_PORT=8007
+      - SEED_NODES=node1:8001,node2:8002,node3:8003,node4:8004,node5:8005,node6:8006
+    ports:
+      - "8007:8007"
+
+networks:
+  default:
+    name: gossip-net
