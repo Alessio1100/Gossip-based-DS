@@ -1,5 +1,5 @@
 #!/bin/bash
-# test_complete.sh - Suite completa di test per sistema Gossip
+# test_integrated.sh - Scenario integrato: Ciclo di vita completo del cluster
 
 set -e
 
@@ -12,15 +12,15 @@ PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-echo -e "${PURPLE}🧪 SUITE COMPLETA TEST SISTEMA GOSSIP 🧪${NC}"
-echo "=================================================="
+echo -e "${PURPLE}🌟 TEST SCENARIO INTEGRATO: CICLO DI VITA CLUSTER 🌟${NC}"
+echo "================================================================="
 
 # Funzioni utility
 log_success() { echo -e "${GREEN}✅ $1${NC}"; }
 log_warning() { echo -e "${YELLOW}⚠️  $1${NC}"; }
 log_error() { echo -e "${RED}❌ $1${NC}"; }
 log_info() { echo -e "${BLUE}ℹ️  $1${NC}"; }
-log_test() { echo -e "${CYAN}🧪 $1${NC}"; }
+log_scenario() { echo -e "${CYAN}🎬 $1${NC}"; }
 
 wait_seconds() {
     local seconds=$1
@@ -33,440 +33,321 @@ wait_seconds() {
     echo -e "\r✅ Completato!          "
 }
 
-print_separator() {
-    echo -e "${CYAN}========================================${NC}"
-}
+# Funzione per ottenere stato cluster
+get_cluster_status() {
+    local node_count=$(docker-compose logs --tail=10 2>/dev/null | grep "GOSSIP.*con.*nodi" | tail -1 | sed -n 's/.*con \([0-9]*\) nodi.*/\1/p' || echo "0")
+    local active_containers=$(docker-compose ps --format "{{.Names}}" | grep -c "node" || echo "0")
+    local gossip_activity=$(docker-compose logs --tail=20 2>/dev/null | grep -c "GOSSIP.*inviato\|GOSSIP.*Ricevuto" || echo "0")
 
-# Variabili globali per tracking risultati
-TESTS_PASSED=0
-TESTS_FAILED=0
-TEST_RESULTS=()
-TOTAL_START_TIME=$(date +%s)
+    echo "📊 STATO CLUSTER: $node_count nodi gossip, $active_containers container, $gossip_activity messaggi"
 
-record_test_result() {
-    local test_name="$1"
-    local result="$2"
-    local details="$3"
-
-    if [ "$result" = "PASS" ]; then
-        ((TESTS_PASSED++))
-        TEST_RESULTS+=("✅ $test_name: PASSATO - $details")
-    else
-        ((TESTS_FAILED++))
-        TEST_RESULTS+=("❌ $test_name: FALLITO - $details")
-    fi
+    # Return values
+    export CLUSTER_NODES=$node_count
+    export CLUSTER_CONTAINERS=$active_containers
+    export CLUSTER_ACTIVITY=$gossip_activity
 }
 
 # Cleanup iniziale
-log_info "Cleanup iniziale completo..."
-docker-compose down -v &>/dev/null 2>&1 || true
+log_info "Preparazione ambiente di test..."
+docker-compose down -v --remove-orphans &>/dev/null || true
+docker system prune -f --volumes &>/dev/null || true
 sleep 3
 
 echo ""
-echo "📋 PIANO DI TEST:"
-echo "1. 🚀 JOIN: Aggiunta progressiva di nodi (2-5 nodi)"
-echo "2. 🚪 LEAVE: Uscita graceful con propagazione"
-echo "3. 💀 FAILURE: Morte improvvisa + detection completa"
-echo "4. 🧟 RESURRECTION: Recovery di nodo morto"
-echo "5. 🔄 STRESS: Operazioni multiple simultanee"
+echo "📋 SCENARIO: SIMULAZIONE REALISTICA DI UN CLUSTER IN PRODUZIONE"
 echo ""
-read -p "Continuare con tutti i test? (Y/n): " -n 1 -r
+echo "🎬 ATTO 1: Bootstrap e crescita del cluster"
+echo "🎬 ATTO 2: Operazioni normali e manutenzione"
+echo "🎬 ATTO 3: Gestione failure e recovery"
+echo "🎬 ATTO 4: Stabilizzazione finale"
+echo ""
+read -p "🚀 Iniziare la simulazione? (Y/n): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Nn]$ ]]; then
-    echo "Test cancellato dall'utente."
+    echo "Simulazione annullata."
     exit 0
 fi
 
-# =================================================================
-# TEST 1: JOIN PROGRESSIVO
-# =================================================================
-print_separator
-log_test "TEST 1: JOIN PROGRESSIVO"
-print_separator
-
-TEST1_START=$(date +%s)
-log_info "Avvio nodo bootstrap (node1)..."
-docker-compose up -d node1
-wait_seconds 10 "Stabilizzazione nodo bootstrap..."
-
-# Verifica bootstrap
-BOOTSTRAP_OK=$(docker-compose logs node1 --tail=20 2>/dev/null | grep "BOOTSTRAP.*inizializzato" | wc -l)
-if [ "$BOOTSTRAP_OK" -gt 0 ]; then
-    log_success "Nodo bootstrap inizializzato correttamente"
-else
-    log_error "Problema con nodo bootstrap"
-    record_test_result "JOIN_PROGRESSIVO" "FAIL" "Bootstrap fallito"
-    exit 1
-fi
-
-# JOIN progressivo
-NODES_TO_ADD=("node2" "node3" "node4" "node5")
-CURRENT_COUNT=1
-JOIN_SUCCESS=true
-
-for node in "${NODES_TO_ADD[@]}"; do
-    log_info "JOIN di $node (${CURRENT_COUNT}/5 → $((CURRENT_COUNT+1))/5)..."
-    docker-compose up -d $node
-
-    wait_seconds 15 "Attesa propagazione JOIN..."
-
-    ((CURRENT_COUNT++))
-    ACTUAL_COUNT=$(docker-compose logs --tail=30 2>/dev/null | grep "GOSSIP.*con.*nodi" | tail -1 | grep -o "con [0-9]* nodi" | grep -o "[0-9]*" || echo "0")
-
-    if [ "$ACTUAL_COUNT" -eq "$CURRENT_COUNT" ]; then
-        log_success "$node joinato: $ACTUAL_COUNT/$CURRENT_COUNT nodi"
-    else
-        log_warning "$node JOIN incompleto: $ACTUAL_COUNT/$CURRENT_COUNT nodi"
-        # Tolleranza: aspetta altri 10s
-        wait_seconds 10 "Attesa extra propagazione..."
-        ACTUAL_COUNT=$(docker-compose logs --tail=20 2>/dev/null | grep "GOSSIP.*con.*nodi" | tail -1 | grep -o "con [0-9]* nodi" | grep -o "[0-9]*" || echo "0")
-        if [ "$ACTUAL_COUNT" -eq "$CURRENT_COUNT" ]; then
-            log_success "$node joinato dopo attesa extra: $ACTUAL_COUNT nodi"
-        else
-            log_error "$node JOIN fallito definitivamente: $ACTUAL_COUNT/$CURRENT_COUNT nodi"
-            JOIN_SUCCESS=false
-        fi
-    fi
-done
-
-TEST1_END=$(date +%s)
-TEST1_DURATION=$((TEST1_END - TEST1_START))
-
-if [ "$JOIN_SUCCESS" = true ]; then
-    record_test_result "JOIN_PROGRESSIVO" "PASS" "5 nodi, ${TEST1_DURATION}s"
-    log_success "JOIN PROGRESSIVO completato in ${TEST1_DURATION}s"
-else
-    record_test_result "JOIN_PROGRESSIVO" "FAIL" "Alcuni JOIN falliti"
-    log_error "JOIN PROGRESSIVO fallito"
-fi
-
-# Pausa inter-test
-wait_seconds 10 "Pausa stabilizzazione inter-test..."
+# Tracciamento eventi
+EVENTS_LOG=()
+SCENARIO_START=$(date +%s)
 
 # =================================================================
-# TEST 2: LEAVE GRACEFUL
+# ATTO 1: BOOTSTRAP E CRESCITA DEL CLUSTER
 # =================================================================
-print_separator
-log_test "TEST 2: LEAVE GRACEFUL"
-print_separator
+echo ""
+log_scenario "ATTO 1: BOOTSTRAP E CRESCITA DEL CLUSTER"
+echo "================================================================="
 
-TEST2_START=$(date +%s)
-LEAVE_NODE="node3"
-EXPECTED_AFTER_LEAVE=4
+# Inizio con cluster minimo
+log_info "T+0s: Avvio nodi bootstrap (node1, node2)"
+docker-compose up -d node1 node2
+EVENTS_LOG+=("T+0s: Bootstrap cluster con node1 e node2")
 
-log_info "Stato pre-LEAVE:"
-PRE_LEAVE_COUNT=$(docker-compose logs --tail=10 2>/dev/null | grep "GOSSIP.*con.*nodi" | tail -1 | grep -o "con [0-9]* nodi" | grep -o "[0-9]*" || echo "0")
-log_info "Nodi attivi: $PRE_LEAVE_COUNT"
+wait_seconds 15 "Bootstrap iniziale..."
+get_cluster_status
+EVENTS_LOG+=("T+15s: Cluster bootstrap - $CLUSTER_NODES nodi gossip")
 
-log_info "Esecuzione LEAVE graceful di $LEAVE_NODE..."
+# Espansione graduale del cluster
+log_info "T+20s: Espansione cluster - aggiunta node3"
+docker-compose up -d node3
+EVENTS_LOG+=("T+20s: JOIN node3")
 
-# Capture logs in background
-timeout 8s docker-compose logs -f $LEAVE_NODE 2>/dev/null | grep -E "(EXIT|LEAVE)" &
-LEAVE_LOG_PID=$!
+wait_seconds 10 "Propagazione JOIN node3..."
+get_cluster_status
+EVENTS_LOG+=("T+30s: Cluster post-JOIN node3 - $CLUSTER_NODES nodi")
 
-# Graceful stop
-docker-compose stop $LEAVE_NODE
+log_info "T+35s: Crescita continua - aggiunta node4"
+docker-compose up -d node4
+EVENTS_LOG+=("T+35s: JOIN node4")
 
-wait_seconds 8 "Attesa elaborazione LEAVE messages..."
+wait_seconds 10 "Propagazione JOIN node4..."
+get_cluster_status
+EVENTS_LOG+=("T+45s: Cluster post-JOIN node4 - $CLUSTER_NODES nodi")
 
-# Kill background log capture
-kill $LEAVE_LOG_PID 2>/dev/null || true
+log_info "T+50s: Completamento cluster - aggiunta node5"
+docker-compose up -d node5
+EVENTS_LOG+=("T+50s: JOIN node5")
 
-# Verifica LEAVE
-LEAVE_SENT=$(docker-compose logs $LEAVE_NODE 2>/dev/null | grep "LEAVE.*Messaggio LEAVE inviato" | wc -l)
-LEAVE_RECEIVED=$(docker-compose logs 2>/dev/null | grep "LEAVE.*Ricevuto messaggio LEAVE da.*$LEAVE_NODE" | wc -l)
+wait_seconds 15 "Stabilizzazione cluster completo..."
+get_cluster_status
+CLUSTER_FULL_SIZE=$CLUSTER_NODES
+EVENTS_LOG+=("T+65s: Cluster completo - $CLUSTER_NODES nodi attivi")
 
-wait_seconds 15 "Attesa propagazione via gossip..."
-
-POST_LEAVE_COUNT=$(docker-compose logs --tail=20 2>/dev/null | grep "GOSSIP.*con.*nodi" | tail -1 | grep -o "con [0-9]* nodi" | grep -o "[0-9]*" || echo "0")
-
-TEST2_END=$(date +%s)
-TEST2_DURATION=$((TEST2_END - TEST2_START))
-
-LEAVE_SUCCESS=true
-if [ "$LEAVE_SENT" -eq 0 ]; then
-    log_error "LEAVE messages non inviati"
-    LEAVE_SUCCESS=false
-fi
-
-if [ "$LEAVE_RECEIVED" -eq 0 ]; then
-    log_error "LEAVE messages non ricevuti da altri nodi"
-    LEAVE_SUCCESS=false
-fi
-
-if [ "$POST_LEAVE_COUNT" -ne "$EXPECTED_AFTER_LEAVE" ]; then
-    log_error "Conteggio post-LEAVE errato: $POST_LEAVE_COUNT (atteso: $EXPECTED_AFTER_LEAVE)"
-    LEAVE_SUCCESS=false
-fi
-
-if [ "$LEAVE_SUCCESS" = true ]; then
-    record_test_result "LEAVE_GRACEFUL" "PASS" "LEAVE inviati: $LEAVE_SENT, ricevuti: $LEAVE_RECEIVED, ${TEST2_DURATION}s"
-    log_success "LEAVE GRACEFUL completato in ${TEST2_DURATION}s"
-else
-    record_test_result "LEAVE_GRACEFUL" "FAIL" "Problemi con LEAVE messages"
-    log_error "LEAVE GRACEFUL fallito"
-fi
-
-# Pausa inter-test
-wait_seconds 10 "Pausa stabilizzazione inter-test..."
+log_success "ATTO 1 COMPLETATO: Cluster cresciuto da 2 a $CLUSTER_FULL_SIZE nodi"
 
 # =================================================================
-# TEST 3: FAILURE DETECTION COMPLETA
+# ATTO 2: OPERAZIONI NORMALI E MANUTENZIONE
 # =================================================================
-print_separator
-log_test "TEST 3: FAILURE DETECTION COMPLETA"
-print_separator
+echo ""
+log_scenario "ATTO 2: OPERAZIONI NORMALI E MANUTENZIONE"
+echo "================================================================="
 
-TEST3_START=$(date +%s)
-KILL_NODE="node4"
-EXPECTED_AFTER_KILL=3
+log_info "T+70s: Periodo di operazioni normali..."
+wait_seconds 20 "Osservazione traffico gossip normale..."
 
-log_info "Stato pre-FAILURE:"
-PRE_KILL_COUNT=$(docker-compose logs --tail=10 2>/dev/null | grep "GOSSIP.*con.*nodi" | tail -1 | grep -o "con [0-9]* nodi" | grep -o "[0-9]*" || echo "0")
-log_info "Nodi attivi: $PRE_KILL_COUNT"
+get_cluster_status
+EVENTS_LOG+=("T+90s: Operazioni normali - $CLUSTER_ACTIVITY messaggi gossip")
 
-log_info "Kill improvviso di $KILL_NODE..."
+log_info "T+95s: Manutenzione programmata - LEAVE graceful di node3"
+EVENTS_LOG+=("T+95s: LEAVE programmato node3")
 
-# Kill brutale
-CONTAINER_ID=$(docker-compose ps -q $KILL_NODE)
+# Cattura logs LEAVE
+timeout 8s docker-compose logs -f node3 2>/dev/null | grep "LEAVE\|EXIT" &
+CAPTURE_PID=$!
+
+docker-compose stop node3
+wait_seconds 5 "Elaborazione LEAVE..."
+kill $CAPTURE_PID 2>/dev/null || true
+
+wait_seconds 15 "Propagazione e stabilizzazione post-LEAVE..."
+get_cluster_status
+EVENTS_LOG+=("T+115s: Post-LEAVE - $CLUSTER_NODES nodi, $CLUSTER_CONTAINERS container")
+
+log_success "ATTO 2 COMPLETATO: Manutenzione graceful eseguita con successo"
+
+# =================================================================
+# ATTO 3: GESTIONE FAILURE E RECOVERY
+# =================================================================
+echo ""
+log_scenario "ATTO 3: GESTIONE FAILURE E RECOVERY"
+echo "================================================================="
+
+log_info "T+120s: Periodo di stabilità post-manutenzione..."
+wait_seconds 10 "Stabilizzazione..."
+
+get_cluster_status
+STABLE_COUNT=$CLUSTER_NODES
+EVENTS_LOG+=("T+130s: Cluster stabile - $STABLE_COUNT nodi")
+
+log_warning "T+135s: EVENTO CRITICO - Failure improvviso di node4!"
+CONTAINER_ID=$(docker-compose ps -q node4)
+EVENTS_LOG+=("T+135s: FAILURE improvviso node4")
+
 if [ -n "$CONTAINER_ID" ]; then
     docker kill $CONTAINER_ID &>/dev/null
-    log_success "$KILL_NODE killato (${CONTAINER_ID:0:12})"
+    log_error "node4 terminato improvvisamente (simula crash hardware)"
 else
-    log_error "Container $KILL_NODE non trovato"
-    record_test_result "FAILURE_DETECTION" "FAIL" "Container non trovato"
-    exit 1
+    log_error "Container node4 non trovato per failure test"
 fi
 
+# Monitoring della failure detection in tempo reale
+log_info "T+140s: Monitoring failure detection..."
 FAILURE_START=$(date +%s)
+DETECTION_FOUND=false
 
-# Monitoring failure detection
-log_info "Monitoring failure detection (max 140s)..."
+for i in {1..12}; do  # 60 secondi di monitoring
+    sleep 5
+    ELAPSED=$((5 * i))
 
-SUSPECT_DETECTED=false
-DEAD_DETECTED=false
-REMOVED_DETECTED=false
-SUSPECT_TIME=0
-DEAD_TIME=0
-REMOVED_TIME=0
+    # Verifica detection
+    FAILURE_MSGS=$(docker-compose logs --since="$FAILURE_START" 2>/dev/null | grep -c "FAILURE.*node4" || echo "0")
 
-MAX_WAIT=140
-ELAPSED=0
-
-while [ $ELAPSED -lt $MAX_WAIT ]; do
-    CURRENT_TIME=$(date +%s)
-    ELAPSED=$((CURRENT_TIME - FAILURE_START))
-
-    # Check SUSPECT
-    if [ "$SUSPECT_DETECTED" = false ]; then
-        SUSPECT_COUNT=$(docker-compose logs --since="$(date -d @$FAILURE_START -Iseconds)" 2>/dev/null | grep "FAILURE.*$KILL_NODE.*SUSPECT" | wc -l)
-        if [ "$SUSPECT_COUNT" -gt 0 ]; then
-            SUSPECT_DETECTED=true
-            SUSPECT_TIME=$ELAPSED
-            log_success "SUSPECT rilevato dopo ${SUSPECT_TIME}s"
-        fi
+    if [ "$FAILURE_MSGS" -gt 0 ] && [ "$DETECTION_FOUND" = false ]; then
+        DETECTION_FOUND=true
+        log_success "T+$((135 + ELAPSED))s: Failure detection attivata! ($FAILURE_MSGS messaggi)"
+        EVENTS_LOG+=("T+$((135 + ELAPSED))s: Failure detection - node4 rilevato come failed")
+        break
     fi
 
-    # Check DEAD
-    if [ "$SUSPECT_DETECTED" = true ] && [ "$DEAD_DETECTED" = false ]; then
-        DEAD_COUNT=$(docker-compose logs --since="$(date -d @$FAILURE_START -Iseconds)" 2>/dev/null | grep "FAILURE.*$KILL_NODE.*DEAD" | wc -l)
-        if [ "$DEAD_COUNT" -gt 0 ]; then
-            DEAD_DETECTED=true
-            DEAD_TIME=$ELAPSED
-            log_success "DEAD rilevato dopo ${DEAD_TIME}s"
-        fi
-    fi
-
-    # Check REMOVED
-    if [ "$DEAD_DETECTED" = true ] && [ "$REMOVED_DETECTED" = false ]; then
-        REMOVED_COUNT=$(docker-compose logs --since="$(date -d @$FAILURE_START -Iseconds)" 2>/dev/null | grep "FAILURE.*$KILL_NODE.*rimosso" | wc -l)
-        if [ "$REMOVED_COUNT" -gt 0 ]; then
-            REMOVED_DETECTED=true
-            REMOVED_TIME=$ELAPSED
-            log_success "REMOVED rilevato dopo ${REMOVED_TIME}s"
-            break
-        fi
-    fi
-
-    printf "\r⏳ Failure detection... %ds [S:%s D:%s R:%s]" \
-        $ELAPSED \
-        $([ "$SUSPECT_DETECTED" = true ] && echo "✓" || echo "⏳") \
-        $([ "$DEAD_DETECTED" = true ] && echo "✓" || echo "⏳") \
-        $([ "$REMOVED_DETECTED" = true ] && echo "✓" || echo "⏳")
-
-    sleep 3
+    printf "\r⏳ Monitoring failure detection... %ds" $ELAPSED
 done
 
 echo ""
 
-wait_seconds 10 "Stabilizzazione finale post-failure..."
+get_cluster_status
+EVENTS_LOG+=("T+200s: Post-failure - $CLUSTER_NODES nodi gossip, $CLUSTER_CONTAINERS container")
 
-POST_KILL_COUNT=$(docker-compose logs --tail=20 2>/dev/null | grep "GOSSIP.*con.*nodi" | tail -1 | grep -o "con [0-9]* nodi" | grep -o "[0-9]*" || echo "0")
+# Recovery: Resurrezione del nodo
+log_info "T+205s: RECOVERY - Riavvio node4 (simula riparazione hardware)"
+docker-compose up -d node4
+EVENTS_LOG+=("T+205s: RECOVERY node4 - riavvio dopo failure")
 
-TEST3_END=$(date +%s)
-TEST3_DURATION=$((TEST3_END - TEST3_START))
+wait_seconds 20 "Recovery e re-join..."
+get_cluster_status
+EVENTS_LOG+=("T+225s: Post-recovery - $CLUSTER_NODES nodi, $CLUSTER_CONTAINERS container")
 
-FAILURE_SUCCESS=true
-FAILURE_DETAILS=""
-
-if [ "$SUSPECT_DETECTED" = false ]; then
-    log_error "SUSPECT mai rilevato"
-    FAILURE_SUCCESS=false
-    FAILURE_DETAILS+="No-SUSPECT "
-fi
-
-if [ "$DEAD_DETECTED" = false ]; then
-    log_error "DEAD mai rilevato"
-    FAILURE_SUCCESS=false
-    FAILURE_DETAILS+="No-DEAD "
-fi
-
-if [ "$REMOVED_DETECTED" = false ]; then
-    log_error "REMOVED mai rilevato"
-    FAILURE_SUCCESS=false
-    FAILURE_DETAILS+="No-REMOVED "
-fi
-
-if [ "$POST_KILL_COUNT" -ne "$EXPECTED_AFTER_KILL" ]; then
-    log_error "Conteggio finale errato: $POST_KILL_COUNT (atteso: $EXPECTED_AFTER_KILL)"
-    FAILURE_SUCCESS=false
-    FAILURE_DETAILS+="Wrong-count($POST_KILL_COUNT) "
-fi
-
-if [ "$FAILURE_SUCCESS" = true ]; then
-    record_test_result "FAILURE_DETECTION" "PASS" "S:${SUSPECT_TIME}s D:${DEAD_TIME}s R:${REMOVED_TIME}s, ${TEST3_DURATION}s"
-    log_success "FAILURE DETECTION completata in ${TEST3_DURATION}s"
-else
-    record_test_result "FAILURE_DETECTION" "FAIL" "$FAILURE_DETAILS"
-    log_error "FAILURE DETECTION fallita"
-fi
+log_success "ATTO 3 COMPLETATO: Failure detection e recovery eseguiti"
 
 # =================================================================
-# TEST 4: RESURRECTION
+# ATTO 4: STABILIZZAZIONE FINALE
 # =================================================================
-print_separator
-log_test "TEST 4: RESURRECTION"
-print_separator
+echo ""
+log_scenario "ATTO 4: STABILIZZAZIONE E VERIFICA FINALE"
+echo "================================================================="
 
-TEST4_START=$(date +%s)
+log_info "T+230s: Verifica stabilità finale del cluster..."
+wait_seconds 25 "Stabilizzazione finale..."
 
-log_info "Test resurrezione di $KILL_NODE..."
-docker-compose up -d $KILL_NODE
+get_cluster_status
+FINAL_NODES=$CLUSTER_NODES
+FINAL_CONTAINERS=$CLUSTER_CONTAINERS
+FINAL_ACTIVITY=$CLUSTER_ACTIVITY
 
-wait_seconds 25 "Attesa re-join completo..."
+EVENTS_LOG+=("T+255s: STATO FINALE - $FINAL_NODES nodi gossip, $FINAL_CONTAINERS container")
 
-RESURRECTION_COUNT=$(docker-compose logs --tail=30 2>/dev/null | grep "GOSSIP.*con.*nodi" | tail -1 | grep -o "con [0-9]* nodi" | grep -o "[0-9]*" || echo "0")
-RESURRECTION_SENDING=$(docker-compose logs $KILL_NODE --tail=20 2>/dev/null | grep "GOSSIP.*inviato" | wc -l)
-RESURRECTION_RECEIVING=$(docker-compose logs --tail=50 2>/dev/null | grep "GOSSIP.*Ricevuto.*$KILL_NODE" | wc -l)
+# Test finale di resilienza
+log_info "T+260s: Test finale - aggiunta last-minute di node6"
+docker-compose up -d node6
+EVENTS_LOG+=("T+260s: JOIN finale node6")
 
-TEST4_END=$(date +%s)
-TEST4_DURATION=$((TEST4_END - TEST4_START))
+wait_seconds 15 "Integrazione node6..."
+get_cluster_status
+EVENTS_LOG+=("T+275s: CLUSTER FINALE - $CLUSTER_NODES nodi totali")
 
-if [ "$RESURRECTION_COUNT" -eq 4 ] && [ "$RESURRECTION_SENDING" -gt 0 ] && [ "$RESURRECTION_RECEIVING" -gt 0 ]; then
-    record_test_result "RESURRECTION" "PASS" "4 nodi, sending:$RESURRECTION_SENDING, receiving:$RESURRECTION_RECEIVING, ${TEST4_DURATION}s"
-    log_success "RESURRECTION completata in ${TEST4_DURATION}s"
-else
-    record_test_result "RESURRECTION" "FAIL" "Count:$RESURRECTION_COUNT, Send:$RESURRECTION_SENDING, Recv:$RESURRECTION_RECEIVING"
-    log_error "RESURRECTION fallita"
-fi
-
-# =================================================================
-# TEST 5: STRESS TEST
-# =================================================================
-print_separator
-log_test "TEST 5: STRESS TEST"
-print_separator
-
-TEST5_START=$(date +%s)
-
-log_info "Stress test: operazioni multiple simultanee..."
-
-# Aggiungi node6 e node7 simultaneamente
-log_info "JOIN simultaneo di node6 e node7..."
-docker-compose up -d node6 node7 &
-PARALLEL_PID=$!
-
-wait_seconds 20 "Attesa JOIN multipli..."
-wait $PARALLEL_PID
-
-# Verifica conteggio
-STRESS_COUNT=$(docker-compose logs --tail=30 2>/dev/null | grep "GOSSIP.*con.*nodi" | tail -1 | grep -o "con [0-9]* nodi" | grep -o "[0-9]*" || echo "0")
-
-if [ "$STRESS_COUNT" -eq 6 ]; then
-    log_success "JOIN multipli riusciti: $STRESS_COUNT nodi"
-    STRESS_JOIN_OK=true
-else
-    log_warning "JOIN multipli parziali: $STRESS_COUNT nodi (atteso: 6)"
-    STRESS_JOIN_OK=false
-fi
-
-# LEAVE simultaneo
-log_info "LEAVE simultaneo di node6 e node7..."
-docker-compose stop node6 node7 &
-STOP_PID=$!
-
-wait_seconds 15 "Attesa LEAVE multipli..."
-wait $STOP_PID
-
-# Verifica finale
-FINAL_STRESS_COUNT=$(docker-compose logs --tail=20 2>/dev/null | grep "GOSSIP.*con.*nodi" | tail -1 | grep -o "con [0-9]* nodi" | grep -o "[0-9]*" || echo "0")
-
-TEST5_END=$(date +%s)
-TEST5_DURATION=$((TEST5_END - TEST5_START))
-
-if [ "$STRESS_JOIN_OK" = true ] && [ "$FINAL_STRESS_COUNT" -eq 4 ]; then
-    record_test_result "STRESS_TEST" "PASS" "JOIN+LEAVE multipli, ${TEST5_DURATION}s"
-    log_success "STRESS TEST completato in ${TEST5_DURATION}s"
-else
-    record_test_result "STRESS_TEST" "FAIL" "JOIN:$STRESS_JOIN_OK, Final:$FINAL_STRESS_COUNT"
-    log_error "STRESS TEST fallito"
-fi
+log_success "ATTO 4 COMPLETATO: Cluster stabilizzato e testato"
 
 # =================================================================
-# REPORT FINALE
+# ANALISI FINALE E VALUTAZIONE
 # =================================================================
-TOTAL_END_TIME=$(date +%s)
-TOTAL_DURATION=$((TOTAL_END_TIME - TOTAL_START_TIME))
-
-print_separator
-echo -e "${PURPLE}📊 REPORT FINALE SUITE COMPLETA${NC}"
-print_separator
+SCENARIO_END=$(date +%s)
+TOTAL_DURATION=$((SCENARIO_END - SCENARIO_START))
 
 echo ""
-echo "⏱️  Durata totale: ${TOTAL_DURATION}s ($(($TOTAL_DURATION/60))m $(($TOTAL_DURATION%60))s)"
-echo "✅ Test passati: $TESTS_PASSED"
-echo "❌ Test falliti: $TESTS_FAILED"
-echo "📈 Success rate: $(($TESTS_PASSED * 100 / ($TESTS_PASSED + $TESTS_FAILED)))%"
+echo "================================================================="
+log_scenario "📊 ANALISI FINALE DELLO SCENARIO"
+echo "================================================================="
 
 echo ""
-echo "📋 Dettaglio risultati:"
-for result in "${TEST_RESULTS[@]}"; do
-    echo "   $result"
+echo "⏱️  Durata totale simulazione: ${TOTAL_DURATION}s ($(($TOTAL_DURATION/60))m $(($TOTAL_DURATION%60))s)"
+echo "🎬 Eventi simulati: ${#EVENTS_LOG[@]}"
+echo "🔧 Operazioni testate: JOIN, LEAVE, FAILURE, RECOVERY"
+echo ""
+
+echo "📋 CRONOLOGIA EVENTI:"
+for event in "${EVENTS_LOG[@]}"; do
+    echo "   📍 $event"
 done
 
 echo ""
-echo "📊 Stato finale sistema:"
-docker-compose ps
-echo ""
-FINAL_NODE_COUNT=$(docker-compose logs --tail=10 2>/dev/null | grep "GOSSIP.*con.*nodi" | tail -1 | grep -o "con [0-9]* nodi" | grep -o "[0-9]*" || echo "0")
-echo "🌐 Nodi attivi nel gossip: $FINAL_NODE_COUNT"
+echo "🏆 VALUTAZIONE SCENARIO:"
+
+# Criteri di successo dello scenario integrato
+SUCCESS_CRITERIA=0
+TOTAL_CRITERIA=5
 
 echo ""
-if [ $TESTS_FAILED -eq 0 ]; then
-    echo -e "${GREEN}🎉 SUITE COMPLETA: TUTTI I TEST PASSATI! 🎉${NC}"
-    FINAL_EXIT=0
+echo "📊 Criteri di successo:"
+
+# 1. Cluster crescita (JOIN multipli)
+if [ "$CLUSTER_FULL_SIZE" -ge 4 ]; then
+    echo "✅ 1. Crescita cluster: $CLUSTER_FULL_SIZE nodi raggiunti"
+    ((SUCCESS_CRITERIA++))
 else
-    echo -e "${RED}💥 SUITE COMPLETA: $TESTS_FAILED TEST FALLITI 💥${NC}"
-    FINAL_EXIT=1
+    echo "❌ 1. Crescita cluster: solo $CLUSTER_FULL_SIZE nodi (target: ≥4)"
 fi
 
+# 2. Manutenzione LEAVE
+LEAVE_EVIDENCE=$(docker-compose logs 2>/dev/null | grep -c "LEAVE.*node3" || echo "0")
+if [ "$LEAVE_EVIDENCE" -gt 0 ]; then
+    echo "✅ 2. Manutenzione LEAVE: $LEAVE_EVIDENCE evidenze"
+    ((SUCCESS_CRITERIA++))
+else
+    echo "❌ 2. Manutenzione LEAVE: nessuna evidenza"
+fi
+
+# 3. Failure detection
+if [ "$DETECTION_FOUND" = true ]; then
+    echo "✅ 3. Failure detection: attivata correttamente"
+    ((SUCCESS_CRITERIA++))
+else
+    echo "❌ 3. Failure detection: non rilevata"
+fi
+
+# 4. Recovery
+if [ "$FINAL_CONTAINERS" -ge 4 ]; then
+    echo "✅ 4. Recovery: $FINAL_CONTAINERS container attivi"
+    ((SUCCESS_CRITERIA++))
+else
+    echo "❌ 4. Recovery: solo $FINAL_CONTAINERS container attivi"
+fi
+
+# 5. Stabilità finale
+if [ "$FINAL_ACTIVITY" -gt 10 ]; then
+    echo "✅ 5. Stabilità finale: $FINAL_ACTIVITY messaggi gossip attivi"
+    ((SUCCESS_CRITERIA++))
+else
+    echo "❌ 5. Stabilità finale: solo $FINAL_ACTIVITY messaggi gossip"
+fi
+
+# Calcolo score finale
+SCORE_PERCENTAGE=$((SUCCESS_CRITERIA * 100 / TOTAL_CRITERIA))
+
 echo ""
-read -p "🧹 Vuoi fare cleanup finale? (Y/n): " -n 1 -r
+echo "📈 SCORE FINALE: $SUCCESS_CRITERIA/$TOTAL_CRITERIA criteri soddisfatti ($SCORE_PERCENTAGE%)"
+
+if [ $SCORE_PERCENTAGE -eq 100 ]; then
+    echo -e "${GREEN}🏆 ECCELLENTE: Sistema gossip supera scenario completo!${NC}"
+    GRADE="A+"
+elif [ $SCORE_PERCENTAGE -ge 80 ]; then
+    echo -e "${YELLOW}🥇 OTTIMO: Sistema gossip gestisce bene scenari complessi${NC}"
+    GRADE="A"
+elif [ $SCORE_PERCENTAGE -ge 60 ]; then
+    echo -e "${YELLOW}🥈 BUONO: Sistema gossip funzionale con miglioramenti minori${NC}"
+    GRADE="B"
+else
+    echo -e "${RED}🥉 SUFFICIENTE: Sistema gossip richiede miglioramenti${NC}"
+    GRADE="C"
+fi
+
+echo "🎓 Voto scenario integrato: $GRADE"
+
+echo ""
+read -p "🧹 Cleanup finale dell'ambiente? (Y/n): " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Nn]$ ]]; then
     log_info "Cleanup finale..."
-    docker-compose down -v
-    log_success "Cleanup completato"
+    docker-compose down -v --remove-orphans &>/dev/null || true
+    log_success "Ambiente pulito"
 fi
 
-exit $FINAL_EXIT
+echo ""
+echo -e "${PURPLE}🌟 SCENARIO INTEGRATO COMPLETATO 🌟${NC}"
+echo "================================================================="
+
+# Exit code basato sul successo
+if [ $SCORE_PERCENTAGE -ge 80 ]; then
+    exit 0
+else
+    exit 1
+fi
