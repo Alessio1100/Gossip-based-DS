@@ -26,10 +26,72 @@ func (ml *MembershipList) AddOrUpdateNode(node util.NodeStatus) {
 
 	existing, exists := ml.members[node.ID]
 
-	// Se il nodo non esiste o ha informazioni più recenti, aggiorniamo
-	if !exists || node.LastSeen > existing.LastSeen {
+	if !exists {
+		// Nodo nuovo: aggiungilo
 		ml.members[node.ID] = node
+		return
 	}
+
+	// ✅ LOGICA SMART per gestire conflitti di stato
+
+	// Parse dei timestamp per confronto
+	existingTime, errExisting := time.Parse(time.RFC3339, existing.LastSeen)
+	newTime, errNew := time.Parse(time.RFC3339, node.LastSeen)
+
+	if errExisting != nil || errNew != nil {
+		// Se errore nel parsing, usa quello più recente come stringa
+		if node.LastSeen > existing.LastSeen {
+			ml.members[node.ID] = node
+		}
+		return
+	}
+
+	// ✅ REGOLE per risolvere conflitti di stato:
+
+	// 1. Se ricevo info più recente, aggiorna sempre
+	if newTime.After(existingTime) {
+		ml.members[node.ID] = node
+		return
+	}
+
+	// 2. Se stesso timestamp, usa la precedenza degli stati
+	if newTime.Equal(existingTime) {
+		// Precedenza: ALIVE > SUSPECT > DEAD
+		if shouldUpdateState(existing.Status, node.Status) {
+			existing.Status = node.Status
+			ml.members[node.ID] = existing
+		}
+		return
+	}
+
+	// 3. Se ricevo info più vecchia, aggiorna solo se è "migliore"
+	if newTime.Before(existingTime) {
+		// Solo se lo stato ricevuto è "migliore" (es. ALIVE vs SUSPECT)
+		if shouldUpdateState(existing.Status, node.Status) {
+			// Mantieni il timestamp più recente ma aggiorna lo stato
+			existing.Status = node.Status
+			ml.members[node.ID] = existing
+		}
+	}
+}
+
+func shouldUpdateState(currentStatus, newStatus string) bool {
+	// Mappa priorità stati: ALIVE > SUSPECT > DEAD
+	priority := map[string]int{
+		"alive":   3,
+		"suspect": 2,
+		"dead":    1,
+	}
+
+	currentPrio, okCurrent := priority[currentStatus]
+	newPrio, okNew := priority[newStatus]
+
+	if !okCurrent || !okNew {
+		return false
+	}
+
+	// Aggiorna solo se il nuovo stato ha priorità maggiore (è "migliore")
+	return newPrio > currentPrio
 }
 
 // ✅ Rimuove un nodo dalla lista

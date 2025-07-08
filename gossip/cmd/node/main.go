@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
+	"Gossip/internal/failure" // <-- DECOMMENTA QUESTA RIGA
 	"Gossip/internal/gossip"
-	//"Gossip/internal/leave"
-	//"Gossip/internal/failure"
+	"Gossip/internal/leave" // <-- DECOMMENTA QUESTA RIGA
 	"Gossip/internal/membership"
 	"Gossip/internal/util"
 )
@@ -77,7 +77,7 @@ func main() {
 	go gossip.StartGossipCycle(nodeID, nodeIP, nodePort, localMembership, selfNode)
 
 	// ✅ Avvio failure detector
-	//go failure.StartFailureDetector(localMembership)
+	go failure.StartFailureDetector(localMembership, selfNode) // <-- DECOMMENTA QUESTA RIGA
 
 	// ✅ Gestione LEAVE in chiusura
 	signalChan := make(chan os.Signal, 1)
@@ -85,6 +85,6 @@ func main() {
 	<-signalChan
 
 	log.Println("[EXIT] Ricevuto segnale di interruzione. Comunicazione LEAVE alla rete.")
-	//leave.SendLeaveMessage(localMembership, selfNode)
+	leave.SendLeaveMessage(localMembership, selfNode) // <-- DECOMMENTA QUESTA RIGA
 	log.Println("[EXIT] Nodo arrestato correttamente.")
 }
